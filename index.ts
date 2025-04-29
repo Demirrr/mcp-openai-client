@@ -5,13 +5,20 @@ import { join } from "node:path";
 import { InferenceClient } from "@huggingface/inference";  // HuggingFace API
 import type { StdioServerParameters } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Agent } from "./src/Agent";
+import * as dotenv from 'dotenv';
 
-const PROVIDER = "http://harebell.cs.upb.de:8501/v1";
-const TOKEN = "token-tentris-upb";  // Replace with real token
-const MODEL_ID = "tentris";
+// Load environment variables from .env file
+dotenv.config();
+
+// Get configuration from environment variables with fallbacks
+const PROVIDER = process.env.PROVIDER || "";
+const TOKEN = process.env.TOKEN || "";  
+const MODEL_ID = process.env.MODEL_ID || "";
+// Log configuration (without sensitive data)
+console.log(`Using provider: ${PROVIDER}`);
+console.log(`Using model: ${MODEL_ID}`);
+// Initialize the client with the token and endpoint
 const client = new InferenceClient(TOKEN).endpoint(PROVIDER);
-
-
 
 const SERVERS: StdioServerParameters[] = [
 	{
@@ -42,12 +49,14 @@ async function chatWithLLM() {
     console.error("Error: HF_TOKEN environment variable is not set");
     return;
   }
-  
-  const agent = new Agent({provider: PROVIDER, 
+
+  const agent = new Agent({
+    provider: PROVIDER, 
     model: MODEL_ID,
-    apiKey: process.env.HF_TOKEN,
+    apiKey: TOKEN,
     servers: SERVERS,
   });
+  
 
   // Set up readline interface for CLI interaction
   const rl = readline.createInterface({ input: stdin, output: stdout });
@@ -63,7 +72,7 @@ async function chatWithLLM() {
   // Display initial information
   stdout.write(ANSI.BLUE + "Welcome to the LLM CLI! Type 'exit' to quit." + ANSI.RESET);
   stdout.write("\n");
-
+  // @TODO:Integarte the agent by replacing the LLM call with the agent call
   // Loop for user input
   while (true) {
     const input = await rl.question("> ");
