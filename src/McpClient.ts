@@ -88,6 +88,17 @@ export class McpClient {
 		);
 	}
 
+async logAvailableTools(): Promise<void> {
+	console.log("=== Available MCP Tools ===");
+	for (const tool of this.availableTools) {
+	  console.log(`Tool: ${tool.function.name}`);
+	  console.log(`Description: ${tool.function.description}`);
+	  console.log(`Parameters: ${JSON.stringify(tool.function.parameters, null, 2)}`);
+	  console.log("---");
+	}
+	console.log("=========================");
+  }
+
 	async *processSingleTurnWithTools(
 		messages: ChatCompletionInputMessage[],
 		opts: {
@@ -98,84 +109,112 @@ export class McpClient {
 	): AsyncGenerator<ChatCompletionStreamOutput | ChatCompletionInputMessageTool> {
 		debug("start of single turn");
 
-		const stream = this.client.chatCompletionStream({
-			provider: this.provider,
-			model: this.model,
-			messages,
-			tools: opts.exitLoopTools ? [...opts.exitLoopTools, ...this.availableTools] : this.availableTools,
-			tool_choice: "auto",
-			signal: opts.abortSignal,
-		});
+		const MAX_RETRIES = 3;
+		let retryCount = 0;
 
-		const message = {
-			role: "unknown",
-			content: "",
-		} satisfies ChatCompletionInputMessage;
-		const finalToolCalls: Record<number, ChatCompletionStreamOutputDeltaToolCall> = {};
-		let numOfChunks = 0;
+		while (retryCount < MAX_RETRIES) {
+			try {
+				const stream = this.client.chatCompletionStream({
+					provider: this.provider,
+					model: this.model,
+					messages,
+					tools: opts.exitLoopTools ? [...opts.exitLoopTools, ...this.availableTools] : this.availableTools,
+					tool_choice: "auto",
+					signal: opts.abortSignal,
+				});
 
-		for await (const chunk of stream) {
-			if (opts.abortSignal?.aborted) {
-				throw new Error("AbortError");
-			}
-			yield chunk;
-			debug(chunk.choices[0]);
-			numOfChunks++;
-			const delta = chunk.choices[0]?.delta;
-			if (!delta) {
-				continue;
-			}
-			if (delta.role) {
-				message.role = delta.role;
-			}
-			if (delta.content) {
-				message.content += delta.content;
-			}
-			for (const toolCall of delta.tool_calls ?? []) {
-				// aggregating chunks into an encoded arguments JSON object
-				if (!finalToolCalls[toolCall.index]) {
-					finalToolCalls[toolCall.index] = toolCall;
+				const message = {
+					role: "unknown",
+					content: "",
+				} satisfies ChatCompletionInputMessage;
+				const finalToolCalls: Record<number, ChatCompletionStreamOutputDeltaToolCall> = {};
+				let numOfChunks = 0;
+
+				for await (const chunk of stream) {
+					if (opts.abortSignal?.aborted) {
+						throw new Error("AbortError");
+					}
+					yield chunk;
+					debug(chunk.choices[0]);
+					numOfChunks++;
+					const delta = chunk.choices[0]?.delta;
+					if (!delta) {
+						continue;
+					}
+					if (delta.role) {
+						message.role = delta.role;
+					}
+					if (delta.content) {
+						message.content += delta.content;
+					}
+					for (const toolCall of delta.tool_calls ?? []) {
+						// aggregating chunks into an encoded arguments JSON object
+						if (!finalToolCalls[toolCall.index]) {
+							finalToolCalls[toolCall.index] = toolCall;
+						}
+						if (finalToolCalls[toolCall.index].function.arguments === undefined) {
+							finalToolCalls[toolCall.index].function.arguments = "";
+						}
+						if (toolCall.function.arguments) {
+							finalToolCalls[toolCall.index].function.arguments += toolCall.function.arguments;
+						}
+					}
+					if (opts.exitIfFirstChunkNoTool && numOfChunks <= 2 && Object.keys(finalToolCalls).length === 0) {
+						/// If no tool is present in chunk number 1 or 2, exit.
+						return;
+					}
 				}
-				if (finalToolCalls[toolCall.index].function.arguments === undefined) {
-					finalToolCalls[toolCall.index].function.arguments = "";
+
+				messages.push(message);
+
+				for (const toolCall of Object.values(finalToolCalls)) {
+					const toolName = toolCall.function.name ?? "unknown";
+					/// TODO(Fix upstream type so this is always a string)^
+					try {
+						const toolArgs = toolCall.function.arguments === "" ? {} : JSON.parse(toolCall.function.arguments);
+
+						const toolMessage: ChatCompletionInputMessageTool = {
+							role: "tool",
+							tool_call_id: toolCall.id,
+							content: "",
+							name: toolName,
+						};
+						if (opts.exitLoopTools?.map((t) => t.function.name).includes(toolName)) {
+							messages.push(toolMessage);
+							return yield toolMessage;
+						}
+						/// Get the appropriate session for this tool
+						const client = this.clients.get(toolName);
+						if (client) {
+							const result = await client.callTool({ name: toolName, arguments: toolArgs, signal: opts.abortSignal });
+							toolMessage.content = (result.content as Array<{ text: string }>)[0].text;
+						} else {
+							toolMessage.content = `Error: No session found for tool: ${toolName}`;
+						}
+						messages.push(toolMessage);
+						yield toolMessage;
+					} catch (parseError) {
+						if (parseError instanceof SyntaxError) {
+							console.error(`Failed to parse JSON arguments for tool ${toolName}. Arguments: ${toolCall.function.arguments}`);
+							// Skip this tool call and continue with others
+							continue;
+						}
+						throw parseError;
+					}
 				}
-				if (toolCall.function.arguments) {
-					finalToolCalls[toolCall.index].function.arguments += toolCall.function.arguments;
+				return; // Successfully completed, exit the retry loop
+			} catch (error) {
+				retryCount++;
+				if (error instanceof SyntaxError && error.message.includes("Unexpected end of JSON input")) {
+					console.error(`Attempt ${retryCount}/${MAX_RETRIES}: Received incomplete JSON response from the model.`);
+					if (retryCount < MAX_RETRIES) {
+						console.log("Retrying...");
+						continue;
+					}
+					throw new Error("Failed to get complete response from the model after multiple attempts. Please check your network connection and try again.");
 				}
+				throw error;
 			}
-			if (opts.exitIfFirstChunkNoTool && numOfChunks <= 2 && Object.keys(finalToolCalls).length === 0) {
-				/// If no tool is present in chunk number 1 or 2, exit.
-				return;
-			}
-		}
-
-		messages.push(message);
-
-		for (const toolCall of Object.values(finalToolCalls)) {
-			const toolName = toolCall.function.name ?? "unknown";
-			/// TODO(Fix upstream type so this is always a string)^
-			const toolArgs = toolCall.function.arguments === "" ? {} : JSON.parse(toolCall.function.arguments);
-
-			const toolMessage: ChatCompletionInputMessageTool = {
-				role: "tool",
-				tool_call_id: toolCall.id,
-				content: "",
-				name: toolName,
-			};
-			if (opts.exitLoopTools?.map((t) => t.function.name).includes(toolName)) {
-				messages.push(toolMessage);
-				return yield toolMessage;
-			}
-			/// Get the appropriate session for this tool
-			const client = this.clients.get(toolName);
-			if (client) {
-				const result = await client.callTool({ name: toolName, arguments: toolArgs, signal: opts.abortSignal });
-				toolMessage.content = (result.content as Array<{ text: string }>)[0].text;
-			} else {
-				toolMessage.content = `Error: No session found for tool: ${toolName}`;
-			}
-			messages.push(toolMessage);
-			yield toolMessage;
 		}
 	}
 

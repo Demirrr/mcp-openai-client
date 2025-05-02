@@ -20,78 +20,31 @@ You MUST plan extensively before each function call, and reflect extensively on 
 const MAX_NUM_TURNS = 10;
 
 const taskCompletionTool: ChatCompletionInputTool = {
-	type: "function",
-	function: {
-		name: "task_complete",
-		description: "Call this tool when the task given by the user is complete",
-		parameters: {
-			type: "object",
-			properties: {},
-		},
-	},
-};
+	type: "function",function: {name: "task_complete",description: "Call this tool when the task given by the user is complete",parameters: {type: "object",properties: {}}}};
+
 const askQuestionTool: ChatCompletionInputTool = {
-	type: "function",
-	function: {
-		name: "ask_question",
-		description: "Ask a question to the user to get more info required to solve or clarify their problem.",
-		parameters: {
-			type: "object",
-			properties: {},
-		},
-	},
-};
+	type: "function",function: {name: "ask_question",description: "Ask a question to the user to get more info required to solve or clarify their problem.",parameters: {type: "object",properties: {}}}};
+
 const exitLoopTools = [taskCompletionTool, askQuestionTool];
 
 export class Agent extends McpClient {
 	private readonly servers: StdioServerParameters[];
 	protected messages: ChatCompletionInputMessage[];
 
-	constructor({
-		provider,
-		baseUrl,
-		model,
-		apiKey,
-		servers,
-		prompt,
-	}: (
-		| {
-				provider: InferenceProvider;
-				baseUrl?: undefined;
-		  }
-		| {
-				baseUrl: string;
-				provider?: undefined;
-		  }
-	) & {
+	constructor({provider, baseUrl, model, apiKey, servers,prompt,}: (| {provider: InferenceProvider;baseUrl?: undefined;} | {baseUrl: string;provider?: undefined;}) & {
 		model: string;
 		apiKey: string;
 		servers: StdioServerParameters[];
 		prompt?: string;
 	}) {
 		super(provider ? { provider, baseUrl, model, apiKey } : { provider, baseUrl, model, apiKey });
-		/// ^This shenanigan is just here to please an overzealous TS type-checker.
 		this.servers = servers;
-		this.messages = [
-			{
-				role: "system",
-				content: prompt ?? DEFAULT_SYSTEM_PROMPT,
-			},
-		];
-	}
+		this.messages = [{role: "system", content: prompt ?? DEFAULT_SYSTEM_PROMPT,},];}
 
-	async loadTools(): Promise<void> {
-		return this.addMcpServers(this.servers);
-	}
+	async loadTools(): Promise<void> {await this.addMcpServers(this.servers);		await this.logAvailableTools(); return;}
 
-	async *run(
-		input: string,
-		opts: { abortSignal?: AbortSignal } = {}
-	): AsyncGenerator<ChatCompletionStreamOutput | ChatCompletionInputMessageTool> {
-		this.messages.push({
-			role: "user",
-			content: input,
-		});
+	async *run(input: string, opts: { abortSignal?: AbortSignal } = {}): AsyncGenerator<ChatCompletionStreamOutput | ChatCompletionInputMessageTool> {
+		this.messages.push({role: "user",content: input,});
 
 		let numOfTurns = 0;
 		let nextTurnShouldCallTools = true;

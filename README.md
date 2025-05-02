@@ -49,11 +49,11 @@ const MODEL_ID = "your-model-id";
 
 ## Usage
 
-### Running the CLI
+### Building & Running the CLI
 
-Start the interactive CLI:
 ```bash
-npm start
+npm run build && npm start
+```
 ```
 
 ### Building a Standalone Binary
