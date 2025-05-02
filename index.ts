@@ -94,24 +94,16 @@ async function main() {
 		for await (const chunk of agent.run(input, { abortSignal: abortController.signal })) {
 			if ("choices" in chunk) {
 				const delta = (chunk as ChatCompletionStreamOutput).choices[0]?.delta;
-				if (delta.content) {
-					stdout.write(delta.content);
-				}
+				if (delta.content) {stdout.write(delta.content);}
+
 				if (delta.tool_calls) {
 					stdout.write(ANSI.GRAY);
 					for (const deltaToolCall of delta.tool_calls) {
-						if (deltaToolCall.id) {
-							stdout.write(`<Tool ${deltaToolCall.id}>\n`);
-						}
-						if (deltaToolCall.function.name) {
-							stdout.write(deltaToolCall.function.name + " ");
-						}
-						if (deltaToolCall.function.arguments) {
-							stdout.write(deltaToolCall.function.arguments);
-						}
+						if (deltaToolCall.id) {stdout.write(`<Tool ${deltaToolCall.id}>\n`);}
+						if (deltaToolCall.function.name) {stdout.write(deltaToolCall.function.name + " ");}
+						if (deltaToolCall.function.arguments) {stdout.write(deltaToolCall.function.arguments);}
 					}
-					stdout.write(ANSI.RESET);
-				}
+					stdout.write(ANSI.RESET);}
 			} else {
 				/// Tool call info
 				stdout.write("\n\n");
